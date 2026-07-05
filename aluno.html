@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Minha Progressão</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script src="assets/config.js"></script>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="wrap">
+    <div class="brand"><div class="belt-strip"></div><span>Academia</span></div>
+    <div class="nav-links"><a href="aluno.html" class="active">Minha Progressão</a></div>
+    <div class="who">
+      <span id="who-name" class="mono"></span>
+      <button class="btn-ghost" id="logout-btn">Sair</button>
+    </div>
+  </div>
+</div>
+
+<div class="page wrap">
+  <div class="header-row">
+    <div>
+      <h1>Minha Progressão</h1>
+      <div class="subtitle" id="belt-line">Carregando…</div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:18px;">
+    <h3>Caminho de Graduação</h3>
+    <div class="belt-ladder" id="belt-ladder"></div>
+  </div>
+
+  <div class="grid grid-3" style="margin-bottom:24px;" id="finance-cards"></div>
+
+  <div class="grid grid-2">
+    <div class="card">
+      <h3>Mapa de Habilidades</h3>
+      <canvas id="radar-chart" height="260"></canvas>
+    </div>
+    <div class="card">
+      <h3>Evolução Geral (nível médio ao longo do tempo)</h3>
+      <canvas id="timeline-chart" height="260"></canvas>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:18px;">
+    <h3>Detalhe por Habilidade</h3>
+    <div id="skills-list"></div>
+  </div>
+</div>
+
+<script>
+const supabaseClient = supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY);
+
+function nextDueDate(dueDay, today){
+  let due = new Date(today.getFullYear(), today.getMonth(), dueDay);
+  if(due < today) due = new Date(today.getFullYear(), today.getMonth()+1, dueDay);
+  return due;
+}
+
+async function guardAndInit(){
+  const { data: { session } } = await supabaseClient.auth.getSession();
+  if(!session){ window.location.href = 'index.html'; return; }
+
+  const { data: profile } = await supabaseClient.from('profiles').select('*').eq('id', session.user.id).single();
+  if(!profile){ window.location.href = 'index.html'; return; }
+  if(profile.role === 'professor'){ window.location.href = 'professor.html'; return; }
+
+  document.getElementById('who-name').textContent = profile.full_name || profile.email;
+  const belt = profile.belt || 'Branca';
+  const beltColor = window.BELT_COLORS[belt] || '#888';
+  const stripesHTML = [0,1,2,3].map(i => `<i class="${i < (profile.stripes||0) ? 'on':''}"></i>`).join('');
+  document.getElementById('belt-line').innerHTML =
+    `<span class="belt-chip"><span class="belt-swatch" style="background:${beltColor}"></span>Faixa ${belt}<span class="stripe-tab">${stripesHTML}</span></span>`;
+
+  const order = window.BELT_ORDER || ['Branca','Azul','Roxa','Marrom','Preta'];
+  const currentIdx = order.indexOf(belt);
+  document.getElementById('belt-ladder').innerHTML = order.map((b,i) => {
+    const isCurrent = i === currentIdx;
+    return `<div class="seg ${isCurrent?'current':''}" style="background:${window.BELT_COLORS[b]}33;">${b}</div>`;
+  }).join('');
+
+  document.getElementById('logout-btn').onclick = async () => {
+    await supabaseClient.auth.signOut();
+    window.location.href = 'index.html';
+  };
+
+  await loadFinance(profile.id);
+  await loadSkills(profile.id);
+}
+
+async function loadFinance(studentId){
+  const { data: info } = await supabaseClient.from('student_payment_info').select('*').eq('student_id', studentId).maybeSingle();
+  const box = document.getElementById('finance-cards');
+  if(!info){
+    box.innerHTML = `<div class="stat" style="grid-column:1/-1;"><div class="label">Financeiro ainda não configurado pelo professor</div></div>`;
+    return;
+  }
+  const today = new Date();
+  const due = nextDueDate(info.due_day, today);
+  const diffDays = Math.ceil((due - today) / 86400000);
+  let statusHtml = '<span class="status-tag ok">Em dia</span>';
+  let barColor = 'var(--belt-green)';
+  if(!info.active){ statusHtml = '<span class="status-tag danger">Inativo</span>'; barColor = 'var(--belt-red)'; }
+  else if(diffDays <= 1){ statusHtml = '<span class="status-tag warn">Vence em breve</span>'; barColor = '#C99A2E'; }
+
+  box.innerHTML = `
+    <div class="stat"><div class="num mono">R$ ${Number(info.monthly_fee).toFixed(2)}</div><div class="label">Mensalidade</div></div>
+    <div class="stat"><div class="num mono">${due.toLocaleDateString('pt-BR')}</div><div class="label">Próximo vencimento</div></div>
+    <div class="stat" style="border-left-color:${barColor};"><div class="num" style="font-size:15px;padding-top:4px;">${statusHtml}</div><div class="label">Situação</div></div>
+  `;
+}
+
+async function loadSkills(studentId){
+  const { data: skills } = await supabaseClient.from('skills').select('*').order('ordem');
+  const { data: logs } = await supabaseClient
+    .from('student_skill_logs')
+    .select('skill_id, level, recorded_at')
+    .eq('student_id', studentId)
+    .order('recorded_at', { ascending: true });
+
+  if(!skills || skills.length === 0) return;
+
+  // current (latest) level per skill
+  const latestBySkill = {};
+  (logs || []).forEach(row => { latestBySkill[row.skill_id] = row.level; });
+
+  // --- Radar chart: current snapshot ---
+  new Chart(document.getElementById('radar-chart'), {
+    type: 'radar',
+    data: {
+      labels: skills.map(s => s.nome),
+      datasets: [{
+        label: 'Nível atual',
+        data: skills.map(s => latestBySkill[s.id] ?? 0),
+        backgroundColor: 'rgba(29,78,122,0.18)',
+        borderColor: '#1D4E7A',
+        pointBackgroundColor: '#1D4E7A'
+      }]
+    },
+    options: {
+      scales: { r: { min:0, max:5, ticks:{ stepSize:1, color:'#6C6350', backdropColor:'transparent' },
+        grid:{ color:'#C9BE9E' }, angleLines:{ color:'#C9BE9E' }, pointLabels:{ color:'#211D16', font:{ size:11 } } } },
+      plugins: { legend: { labels: { color: '#211D16' } } }
+    }
+  });
+
+  // --- Timeline chart: average level across all skills, per recorded date ---
+  const byDate = {};
+  (logs || []).forEach(row => {
+    const d = new Date(row.recorded_at).toLocaleDateString('pt-BR');
+    if(!byDate[d]) byDate[d] = [];
+    byDate[d].push(row.level);
+  });
+  const dates = Object.keys(byDate);
+  const avgSeries = dates.map(d => (byDate[d].reduce((a,b)=>a+b,0) / byDate[d].length));
+
+  new Chart(document.getElementById('timeline-chart'), {
+    type: 'line',
+    data: {
+      labels: dates.length ? dates : ['—'],
+      datasets: [{
+        label: 'Nível médio geral',
+        data: avgSeries.length ? avgSeries : [0],
+        borderColor: '#1D4E7A',
+        backgroundColor: 'rgba(29,78,122,0.12)',
+        tension: 0.3,
+        fill: true
+      }]
+    },
+    options: {
+      scales: {
+        y: { min:0, max:5, ticks:{ color:'#6C6350' }, grid:{ color:'#C9BE9E' } },
+        x: { ticks:{ color:'#6C6350' }, grid:{ color:'#C9BE9E' } }
+      },
+      plugins: { legend: { labels: { color: '#211D16' } } }
+    }
+  });
+
+  // --- Detail list ---
+  document.getElementById('skills-list').innerHTML = skills.map(s => {
+    const level = latestBySkill[s.id] ?? 0;
+    const dots = [0,1,2,3,4].map(i => `<i class="${i < level ? 'on':''}"></i>`).join('');
+    return `<div class="flex-between" style="border-bottom:1px dashed var(--line);padding:10px 0;">
+      <div><div style="font-weight:600;font-size:14px;">${s.nome}</div><div class="tag-cat">${s.categoria}</div></div>
+      <div class="stripe-tab">${dots}</div>
+    </div>`;
+  }).join('');
+}
+
+guardAndInit();
+</script>
+</body>
+</html>

@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Painel do Professor</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="assets/config.js"></script>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="wrap">
+    <div class="brand"><div class="belt-strip"></div><span>Academia</span></div>
+    <div class="nav-links">
+      <a href="professor.html" class="active">Alunos</a>
+    </div>
+    <div class="who">
+      <span id="who-name" class="mono"></span>
+      <button class="btn-ghost" id="logout-btn">Sair</button>
+    </div>
+  </div>
+</div>
+
+<div class="page wrap">
+  <div class="header-row">
+    <div>
+      <h1>Painel do Professor</h1>
+      <div class="subtitle">Gerencie faixas, habilidades e mensalidades de cada aluno.</div>
+    </div>
+  </div>
+
+  <div class="grid grid-3" style="margin-bottom:24px;">
+    <div class="stat"><div class="num mono" id="stat-total">–</div><div class="label">Alunos ativos</div></div>
+    <div class="stat"><div class="num mono" id="stat-em-dia">–</div><div class="label">Mensalidades em dia</div></div>
+    <div class="stat"><div class="num mono" id="stat-pendentes">–</div><div class="label">Pendentes / a vencer</div></div>
+  </div>
+
+  <div class="card">
+    <div class="flex-between" style="margin-bottom:14px;">
+      <h3 style="margin:0;">Alunos</h3>
+      <span class="small">Alunos aparecem aqui automaticamente após o primeiro acesso pelo link mágico.</span>
+    </div>
+    <div id="students-table-box"><p class="small">Carregando…</p></div>
+  </div>
+</div>
+
+<!-- ================= MODAL: gerenciar aluno ================= -->
+<div class="modal-overlay hidden" id="modal">
+  <div class="modal">
+    <h3 id="modal-title">Gerenciar aluno</h3>
+
+    <div class="field">
+      <label>Faixa</label>
+      <select id="f-belt"></select>
+    </div>
+    <div class="field">
+      <label>Graus (0-4)</label>
+      <select id="f-stripes">
+        <option value="0">0</option><option value="1">1</option><option value="2">2</option>
+        <option value="3">3</option><option value="4">4</option>
+      </select>
+    </div>
+
+    <div class="grid grid-2">
+      <div class="field">
+        <label>Mensalidade (R$)</label>
+        <input id="f-fee" type="number" step="0.01" placeholder="150.00">
+      </div>
+      <div class="field">
+        <label>Dia de vencimento</label>
+        <input id="f-due-day" type="number" min="1" max="28" placeholder="10">
+      </div>
+    </div>
+    <div class="field">
+      <label>Situação financeira</label>
+      <select id="f-active">
+        <option value="true">Ativo</option>
+        <option value="false">Inativo / trancado</option>
+      </select>
+    </div>
+
+    <h3 style="margin-top:22px;">Habilidades técnicas</h3>
+    <div id="skills-form" class="grid" style="gap:10px;"></div>
+
+    <div class="modal-actions">
+      <button class="btn-outline" id="modal-cancel">Cancelar</button>
+      <button class="btn" id="modal-save">Salvar ficha</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const supabaseClient = supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY);
+let CURRENT_STUDENT_ID = null;
+let SKILLS = [];
+
+function beltOptionsHTML(){
+  return Object.keys(window.BELT_COLORS).map(b => `<option value="${b}">${b}</option>`).join('');
+}
+document.getElementById('f-belt').innerHTML = beltOptionsHTML();
+
+async function guardAndInit(){
+  const { data: { session } } = await supabaseClient.auth.getSession();
+  if(!session){ window.location.href = 'index.html'; return; }
+  const { data: profile } = await supabaseClient.from('profiles').select('*').eq('id', session.user.id).single();
+  if(!profile || profile.role !== 'professor'){ window.location.href = 'aluno.html'; return; }
+  document.getElementById('who-name').textContent = profile.full_name || profile.email;
+
+  document.getElementById('logout-btn').onclick = async () => {
+    await supabaseClient.auth.signOut();
+    window.location.href = 'index.html';
+  };
+
+  await loadSkillCatalog();
+  await loadStudents();
+}
+
+async function loadSkillCatalog(){
+  const { data, error } = await supabaseClient.from('skills').select('*').order('ordem');
+  SKILLS = data || [];
+}
+
+async function loadStudents(){
+  const { data: students } = await supabaseClient
+    .from('profiles')
+    .select('*, student_payment_info(*)')
+    .eq('role', 'aluno')
+    .order('full_name');
+
+  if(!students || students.length === 0){
+    document.getElementById('students-table-box').innerHTML =
+      `<div class="empty"><div class="display">Nenhum aluno cadastrado ainda</div>
+       <p class="small">Peça para os alunos acessarem o sistema pelo link mágico ao menos uma vez.</p></div>`;
+    updateStats([]);
+    return;
+  }
+
+  const today = new Date();
+  const rows = students.map(s => {
+    const info = s.student_payment_info;
+    let statusTag = '<span class="status-tag warn">Sem mensalidade</span>';
+    let nextDue = '–';
+    if(info && info.due_day){
+      const due = nextDueDate(info.due_day, today);
+      nextDue = due.toLocaleDateString('pt-BR');
+      const diffDays = Math.ceil((due - today) / 86400000);
+      if(!info.active) statusTag = '<span class="status-tag danger">Inativo</span>';
+      else if(diffDays <= 1) statusTag = '<span class="status-tag warn">Vence em breve</span>';
+      else statusTag = '<span class="status-tag ok">Em dia</span>';
+    }
+    const beltColor = window.BELT_COLORS[s.belt] || '#666';
+    const stripesHTML = [0,1,2,3].map(i => `<i class="${i < (s.stripes||0) ? 'on':''}"></i>`).join('');
+    return `<tr>
+      <td>${s.full_name || s.email}</td>
+      <td><span class="belt-chip"><span class="belt-swatch" style="background:${beltColor}"></span>${s.belt || '—'}<span class="stripe-tab">${stripesHTML}</span></span></td>
+      <td class="mono">${info ? 'R$ ' + Number(info.monthly_fee).toFixed(2) : '–'}</td>
+      <td class="mono">${nextDue}</td>
+      <td>${statusTag}</td>
+      <td><button class="btn-outline" style="padding:6px 12px;font-size:11px;" onclick="openManage('${s.id}')">Abrir ficha</button></td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('students-table-box').innerHTML = `
+    <table>
+      <thead><tr><th>Nome</th><th>Faixa</th><th>Mensalidade</th><th>Próx. vencimento</th><th>Status</th><th></th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+
+  updateStats(students);
+}
+
+function nextDueDate(dueDay, today){
+  let due = new Date(today.getFullYear(), today.getMonth(), dueDay);
+  if(due < today) due = new Date(today.getFullYear(), today.getMonth()+1, dueDay);
+  return due;
+}
+
+function updateStats(students){
+  const total = students.length;
+  let emDia = 0, pendentes = 0;
+  const today = new Date();
+  students.forEach(s => {
+    const info = s.student_payment_info;
+    if(!info || !info.active) return;
+    const due = nextDueDate(info.due_day, today);
+    const diffDays = Math.ceil((due - today) / 86400000);
+    if(diffDays <= 1) pendentes++; else emDia++;
+  });
+  document.getElementById('stat-total').textContent = total;
+  document.getElementById('stat-em-dia').textContent = emDia;
+  document.getElementById('stat-pendentes').textContent = pendentes;
+}
+
+async function openManage(studentId){
+  CURRENT_STUDENT_ID = studentId;
+  const { data: student } = await supabaseClient.from('profiles').select('*').eq('id', studentId).single();
+  const { data: payInfo } = await supabaseClient.from('student_payment_info').select('*').eq('student_id', studentId).maybeSingle();
+  const { data: skillLevels } = await supabaseClient
+    .from('student_skill_logs')
+    .select('skill_id, level, recorded_at')
+    .eq('student_id', studentId)
+    .order('recorded_at', { ascending: false });
+
+  const latestBySkill = {};
+  (skillLevels || []).forEach(row => { if(!(row.skill_id in latestBySkill)) latestBySkill[row.skill_id] = row.level; });
+
+  document.getElementById('modal-title').textContent = 'Gerenciar: ' + (student.full_name || student.email);
+  document.getElementById('f-belt').value = student.belt || 'Branca';
+  document.getElementById('f-stripes').value = student.stripes || 0;
+  document.getElementById('f-fee').value = payInfo ? payInfo.monthly_fee : '';
+  document.getElementById('f-due-day').value = payInfo ? payInfo.due_day : '';
+  document.getElementById('f-active').value = payInfo ? String(payInfo.active) : 'true';
+
+  document.getElementById('skills-form').innerHTML = SKILLS.map(sk => {
+    const level = latestBySkill[sk.id] ?? 0;
+    const dots = [0,1,2,3,4].map(i => `<i class="${i < level ? 'on':''}" data-i="${i}"></i>`).join('');
+    return `<div class="flex-between" style="border-bottom:1px dashed var(--line);padding-bottom:8px;">
+      <div><div style="font-size:13px;font-weight:600;">${sk.nome}</div><div class="tag-cat">${sk.categoria}</div></div>
+      <div class="stripe-tab" data-skill="${sk.id}" data-level="${level}">${dots}</div>
+    </div>`;
+  }).join('');
+
+  // click-to-set level (0-5 pelo número de listras acesas)
+  document.querySelectorAll('#skills-form .stripe-tab').forEach(bar => {
+    bar.querySelectorAll('i').forEach(dot => {
+      dot.style.cursor = 'pointer';
+      dot.addEventListener('click', () => {
+        const clickedLevel = parseInt(dot.dataset.i) + 1;
+        const current = parseInt(bar.dataset.level);
+        const newLevel = (current === clickedLevel) ? clickedLevel - 1 : clickedLevel;
+        bar.dataset.level = newLevel;
+        bar.querySelectorAll('i').forEach((d,i) => d.classList.toggle('on', i < newLevel));
+      });
+    });
+  });
+
+  document.getElementById('modal').classList.remove('hidden');
+}
+
+document.getElementById('modal-cancel').onclick = () => document.getElementById('modal').classList.add('hidden');
+
+document.getElementById('modal-save').onclick = async () => {
+  const belt = document.getElementById('f-belt').value;
+  const stripes = parseInt(document.getElementById('f-stripes').value);
+  const fee = parseFloat(document.getElementById('f-fee').value || 0);
+  const dueDay = parseInt(document.getElementById('f-due-day').value || 0);
+  const active = document.getElementById('f-active').value === 'true';
+
+  await supabaseClient.from('profiles').update({ belt, stripes }).eq('id', CURRENT_STUDENT_ID);
+
+  await supabaseClient.from('student_payment_info').upsert({
+    student_id: CURRENT_STUDENT_ID, monthly_fee: fee, due_day: dueDay, active
+  }, { onConflict: 'student_id' });
+
+  const logs = [];
+  document.querySelectorAll('#skills-form .stripe-tab').forEach(bar => {
+    logs.push({ student_id: CURRENT_STUDENT_ID, skill_id: bar.dataset.skill, level: parseInt(bar.dataset.level) });
+  });
+  if(logs.length) await supabaseClient.from('student_skill_logs').insert(logs);
+
+  document.getElementById('modal').classList.add('hidden');
+  await loadStudents();
+};
+
+guardAndInit();
+</script>
+</body>
+</html>

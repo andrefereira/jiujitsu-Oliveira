@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Academia • Acesso</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="assets/config.js"></script>
+</head>
+<body>
+<div class="auth-screen">
+  <div class="auth-card">
+    <div class="belt-strip-lg"></div>
+    <h1>Área do Aluno &amp; Professor</h1>
+    <p class="lead">Entre com seu e-mail. Enviaremos um link mágico de acesso — sem senha.</p>
+
+    <div id="form-box">
+      <div class="field">
+        <label for="email">E-mail cadastrado</label>
+        <input id="email" type="email" placeholder="voce@email.com" autocomplete="email">
+      </div>
+      <button id="send-btn" class="btn btn-block">Enviar link de acesso</button>
+      <div id="msg"></div>
+    </div>
+
+    <div id="loading-box" class="hidden" style="text-align:center;padding:20px 0;">
+      <p class="small">Verificando sessão…</p>
+    </div>
+  </div>
+</div>
+
+<script>
+const supabaseClient = supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY);
+const msg = document.getElementById('msg');
+const sendBtn = document.getElementById('send-btn');
+
+function showMsg(text, type){
+  msg.innerHTML = `<div class="msg ${type==='ok'?'msg-ok':'msg-err'}">${text}</div>`;
+}
+
+sendBtn.addEventListener('click', async () => {
+  const email = document.getElementById('email').value.trim();
+  if(!email){ showMsg('Informe um e-mail válido.', 'err'); return; }
+  sendBtn.disabled = true;
+  sendBtn.textContent = 'Enviando…';
+  const { error } = await supabaseClient.auth.signInWithOtp({
+    email,
+    options: { emailRedirectTo: window.location.origin + window.location.pathname }
+  });
+  sendBtn.disabled = false;
+  sendBtn.textContent = 'Enviar link de acesso';
+  if(error){
+    showMsg('Não foi possível enviar o link: ' + error.message, 'err');
+  } else {
+    showMsg('Link enviado! Confira sua caixa de entrada (e o spam) e clique para entrar.', 'ok');
+  }
+});
+
+async function redirectByRole(session){
+  document.getElementById('form-box').classList.add('hidden');
+  document.getElementById('loading-box').classList.remove('hidden');
+
+  let { data: profile, error } = await supabaseClient
+    .from('profiles')
+    .select('role, full_name')
+    .eq('id', session.user.id)
+    .single();
+
+  // Se o perfil ainda não existir (primeiro login), cria como "aluno" por padrão.
+  if(!profile){
+    const { data: created } = await supabaseClient
+      .from('profiles')
+      .insert({ id: session.user.id, email: session.user.email, role: 'aluno', full_name: session.user.email })
+      .select()
+      .single();
+    profile = created;
+  }
+
+  if(profile && profile.role === 'professor'){
+    window.location.href = 'professor.html';
+  } else {
+    window.location.href = 'aluno.html';
+  }
+}
+
+(async () => {
+  const { data: { session } } = await supabaseClient.auth.getSession();
+  if(session){ redirectByRole(session); }
+
+  supabaseClient.auth.onAuthStateChange((event, session) => {
+    if(event === 'SIGNED_IN' && session){ redirectByRole(session); }
+  });
+})();
+</script>
+</body>
+</html>
