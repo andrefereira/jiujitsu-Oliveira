@@ -5,7 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Academia • Acesso</title>
 <link rel="stylesheet" href="assets/style.css">
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://www.gstatic.com/firebasejs/12.15.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/12.15.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/12.15.0/firebase-firestore-compat.js"></script>
 <script src="assets/config.js"></script>
 </head>
 <body>
@@ -31,12 +33,22 @@
 </div>
 
 <script>
-const supabaseClient = supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY);
+firebase.initializeApp(window.FIREBASE_CONFIG);
+const auth = firebase.auth();
+const db = firebase.firestore();
+
 const msg = document.getElementById('msg');
 const sendBtn = document.getElementById('send-btn');
+const formBox = document.getElementById('form-box');
+const loadingBox = document.getElementById('loading-box');
 
 function showMsg(text, type){
   msg.innerHTML = `<div class="msg ${type==='ok'?'msg-ok':'msg-err'}">${text}</div>`;
+}
+
+function showLoading(){
+  formBox.classList.add('hidden');
+  loadingBox.classList.remove('hidden');
 }
 
 sendBtn.addEventListener('click', async () => {
@@ -44,37 +56,41 @@ sendBtn.addEventListener('click', async () => {
   if(!email){ showMsg('Informe um e-mail válido.', 'err'); return; }
   sendBtn.disabled = true;
   sendBtn.textContent = 'Enviando…';
-  const { error } = await supabaseClient.auth.signInWithOtp({
-    email,
-    options: { emailRedirectTo: window.location.origin + window.location.pathname }
-  });
+  const actionCodeSettings = {
+    url: window.location.origin + window.location.pathname,
+    handleCodeInApp: true
+  };
+  try {
+    await auth.sendSignInLinkToEmail(email, actionCodeSettings);
+    window.localStorage.setItem('emailForSignIn', email);
+    showMsg('Link enviado! Confira sua caixa de entrada (e o spam) e clique para entrar.', 'ok');
+  } catch (error) {
+    showMsg('Não foi possível enviar o link: ' + error.message, 'err');
+  }
   sendBtn.disabled = false;
   sendBtn.textContent = 'Enviar link de acesso';
-  if(error){
-    showMsg('Não foi possível enviar o link: ' + error.message, 'err');
-  } else {
-    showMsg('Link enviado! Confira sua caixa de entrada (e o spam) e clique para entrar.', 'ok');
-  }
 });
 
-async function redirectByRole(session){
-  document.getElementById('form-box').classList.add('hidden');
-  document.getElementById('loading-box').classList.remove('hidden');
+async function redirectByRole(user){
+  showLoading();
 
-  let { data: profile, error } = await supabaseClient
-    .from('profiles')
-    .select('role, full_name')
-    .eq('id', session.user.id)
-    .single();
+  const ref = db.collection('profiles').doc(user.uid);
+  const snap = await ref.get();
+  let profile;
 
   // Se o perfil ainda não existir (primeiro login), cria como "aluno" por padrão.
-  if(!profile){
-    const { data: created } = await supabaseClient
-      .from('profiles')
-      .insert({ id: session.user.id, email: session.user.email, role: 'aluno', full_name: session.user.email })
-      .select()
-      .single();
-    profile = created;
+  if(!snap.exists){
+    profile = {
+      email: user.email,
+      full_name: user.email,
+      role: 'aluno',
+      belt: 'Branca',
+      stripes: 0,
+      created_at: firebase.firestore.FieldValue.serverTimestamp()
+    };
+    await ref.set(profile);
+  } else {
+    profile = snap.data();
   }
 
   if(profile && profile.role === 'professor'){
@@ -85,11 +101,26 @@ async function redirectByRole(session){
 }
 
 (async () => {
-  const { data: { session } } = await supabaseClient.auth.getSession();
-  if(session){ redirectByRole(session); }
+  // Concluindo login vindo do link mágico (email link)?
+  if(auth.isSignInWithEmailLink(window.location.href)){
+    let email = window.localStorage.getItem('emailForSignIn');
+    if(!email){
+      email = window.prompt('Confirme o e-mail usado para pedir o link de acesso:');
+    }
+    try {
+      const result = await auth.signInWithEmailLink(email, window.location.href);
+      window.localStorage.removeItem('emailForSignIn');
+      window.history.replaceState({}, document.title, window.location.pathname);
+      await redirectByRole(result.user);
+    } catch (error) {
+      showMsg('Não foi possível concluir o login: ' + error.message, 'err');
+    }
+    return;
+  }
 
-  supabaseClient.auth.onAuthStateChange((event, session) => {
-    if(event === 'SIGNED_IN' && session){ redirectByRole(session); }
+  // Sessão já ativa?
+  auth.onAuthStateChanged((user) => {
+    if(user){ redirectByRole(user); }
   });
 })();
 </script>

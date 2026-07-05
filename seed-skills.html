@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Semear catálogo de habilidades</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="https://www.gstatic.com/firebasejs/12.15.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/12.15.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/12.15.0/firebase-firestore-compat.js"></script>
+<script src="assets/config.js"></script>
+</head>
+<body>
+<div class="page wrap" style="max-width:600px;margin:60px auto;">
+  <div class="card">
+    <h3>Utilitário: semear catálogo de habilidades</h3>
+    <p class="small">Use esta página UMA VEZ, logado como professor, para gravar no Firestore
+      a lista de habilidades definida em <code>assets/config.js</code> (SKILL_CATALOG_SEED).
+      É seguro clicar mais de uma vez — habilidades já existentes não são duplicadas.
+      Depois de usar, pode apagar este arquivo do repositório.</p>
+    <div id="status" class="small" style="margin:16px 0;">Verificando sessão…</div>
+    <button id="seed-btn" class="btn" disabled>Semear catálogo</button>
+  </div>
+</div>
+
+<script>
+firebase.initializeApp(window.FIREBASE_CONFIG);
+const auth = firebase.auth();
+const db = firebase.firestore();
+const statusBox = document.getElementById('status');
+const seedBtn = document.getElementById('seed-btn');
+
+function slugify(text){
+  const noAccents = text.normalize('NFD').replace(/[̀-ͯ]/g, '');
+  return noAccents.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+}
+
+auth.onAuthStateChanged(async (user) => {
+  if(!user){
+    statusBox.textContent = 'Você precisa estar logado. Acesse index.html primeiro e depois volte aqui.';
+    return;
+  }
+  const snap = await db.collection('profiles').doc(user.uid).get();
+  const profile = snap.exists ? snap.data() : null;
+  if(!profile || profile.role !== 'professor'){
+    statusBox.textContent = 'Só o professor pode semear o catálogo. Promova seu usuário a "professor" no console do Firestore primeiro.';
+    return;
+  }
+  statusBox.textContent = 'Logado como professor. Pronto para semear ' + window.SKILL_CATALOG_SEED.length + ' habilidades.';
+  seedBtn.disabled = false;
+});
+
+seedBtn.addEventListener('click', async () => {
+  seedBtn.disabled = true;
+  statusBox.textContent = 'Semeando…';
+  const writes = window.SKILL_CATALOG_SEED.map((skill, i) => {
+    const id = slugify(skill.nome);
+    return db.collection('skills').doc(id).set({
+      nome: skill.nome,
+      categoria: skill.categoria,
+      ordem: i + 1
+    }, { merge: true });
+  });
+  await Promise.all(writes);
+  statusBox.textContent = 'Pronto! ' + writes.length + ' habilidades gravadas na coleção "skills".';
+});
+</script>
+</body>
+</html>

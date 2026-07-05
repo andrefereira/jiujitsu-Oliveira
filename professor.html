@@ -5,7 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Painel do Professor</title>
 <link rel="stylesheet" href="assets/style.css">
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://www.gstatic.com/firebasejs/12.15.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/12.15.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/12.15.0/firebase-firestore-compat.js"></script>
 <script src="assets/config.js"></script>
 </head>
 <body>
@@ -92,7 +94,10 @@
 </div>
 
 <script>
-const supabaseClient = supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY);
+firebase.initializeApp(window.FIREBASE_CONFIG);
+const auth = firebase.auth();
+const db = firebase.firestore();
+
 let CURRENT_STUDENT_ID = null;
 let SKILLS = [];
 
@@ -101,15 +106,14 @@ function beltOptionsHTML(){
 }
 document.getElementById('f-belt').innerHTML = beltOptionsHTML();
 
-async function guardAndInit(){
-  const { data: { session } } = await supabaseClient.auth.getSession();
-  if(!session){ window.location.href = 'index.html'; return; }
-  const { data: profile } = await supabaseClient.from('profiles').select('*').eq('id', session.user.id).single();
+async function guardAndInit(user){
+  const snap = await db.collection('profiles').doc(user.uid).get();
+  const profile = snap.exists ? snap.data() : null;
   if(!profile || profile.role !== 'professor'){ window.location.href = 'aluno.html'; return; }
   document.getElementById('who-name').textContent = profile.full_name || profile.email;
 
   document.getElementById('logout-btn').onclick = async () => {
-    await supabaseClient.auth.signOut();
+    await auth.signOut();
     window.location.href = 'index.html';
   };
 
@@ -118,18 +122,26 @@ async function guardAndInit(){
 }
 
 async function loadSkillCatalog(){
-  const { data, error } = await supabaseClient.from('skills').select('*').order('ordem');
-  SKILLS = data || [];
+  const snap = await db.collection('skills').orderBy('ordem').get();
+  SKILLS = snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 
 async function loadStudents(){
-  const { data: students } = await supabaseClient
-    .from('profiles')
-    .select('*, student_payment_info(*)')
-    .eq('role', 'aluno')
-    .order('full_name');
+  const [studentsSnap, paymentsSnap] = await Promise.all([
+    db.collection('profiles').where('role', '==', 'aluno').orderBy('full_name').get(),
+    db.collection('payment_info').get()
+  ]);
 
-  if(!students || students.length === 0){
+  const paymentsById = {};
+  paymentsSnap.forEach(d => { paymentsById[d.id] = d.data(); });
+
+  const students = studentsSnap.docs.map(d => ({
+    id: d.id,
+    ...d.data(),
+    payment_info: paymentsById[d.id] || null
+  }));
+
+  if(students.length === 0){
     document.getElementById('students-table-box').innerHTML =
       `<div class="empty"><div class="display">Nenhum aluno cadastrado ainda</div>
        <p class="small">Peça para os alunos acessarem o sistema pelo link mágico ao menos uma vez.</p></div>`;
@@ -139,7 +151,7 @@ async function loadStudents(){
 
   const today = new Date();
   const rows = students.map(s => {
-    const info = s.student_payment_info;
+    const info = s.payment_info;
     let statusTag = '<span class="status-tag warn">Sem mensalidade</span>';
     let nextDue = '–';
     if(info && info.due_day){
@@ -182,7 +194,7 @@ function updateStats(students){
   let emDia = 0, pendentes = 0;
   const today = new Date();
   students.forEach(s => {
-    const info = s.student_payment_info;
+    const info = s.payment_info;
     if(!info || !info.active) return;
     const due = nextDueDate(info.due_day, today);
     const diffDays = Math.ceil((due - today) / 86400000);
@@ -195,16 +207,20 @@ function updateStats(students){
 
 async function openManage(studentId){
   CURRENT_STUDENT_ID = studentId;
-  const { data: student } = await supabaseClient.from('profiles').select('*').eq('id', studentId).single();
-  const { data: payInfo } = await supabaseClient.from('student_payment_info').select('*').eq('student_id', studentId).maybeSingle();
-  const { data: skillLevels } = await supabaseClient
-    .from('student_skill_logs')
-    .select('skill_id, level, recorded_at')
-    .eq('student_id', studentId)
-    .order('recorded_at', { ascending: false });
+  const [studentSnap, paySnap, logsSnap] = await Promise.all([
+    db.collection('profiles').doc(studentId).get(),
+    db.collection('payment_info').doc(studentId).get(),
+    db.collection('skill_logs').where('student_id', '==', studentId).orderBy('recorded_at', 'desc').get()
+  ]);
+
+  const student = studentSnap.data();
+  const payInfo = paySnap.exists ? paySnap.data() : null;
 
   const latestBySkill = {};
-  (skillLevels || []).forEach(row => { if(!(row.skill_id in latestBySkill)) latestBySkill[row.skill_id] = row.level; });
+  logsSnap.forEach(doc => {
+    const row = doc.data();
+    if(!(row.skill_id in latestBySkill)) latestBySkill[row.skill_id] = row.level;
+  });
 
   document.getElementById('modal-title').textContent = 'Gerenciar: ' + (student.full_name || student.email);
   document.getElementById('f-belt').value = student.belt || 'Branca';
@@ -248,23 +264,34 @@ document.getElementById('modal-save').onclick = async () => {
   const dueDay = parseInt(document.getElementById('f-due-day').value || 0);
   const active = document.getElementById('f-active').value === 'true';
 
-  await supabaseClient.from('profiles').update({ belt, stripes }).eq('id', CURRENT_STUDENT_ID);
+  await db.collection('profiles').doc(CURRENT_STUDENT_ID).set({ belt, stripes }, { merge: true });
 
-  await supabaseClient.from('student_payment_info').upsert({
-    student_id: CURRENT_STUDENT_ID, monthly_fee: fee, due_day: dueDay, active
-  }, { onConflict: 'student_id' });
+  await db.collection('payment_info').doc(CURRENT_STUDENT_ID).set({
+    monthly_fee: fee,
+    due_day: dueDay,
+    active,
+    updated_at: firebase.firestore.FieldValue.serverTimestamp()
+  }, { merge: true });
 
-  const logs = [];
+  const writes = [];
   document.querySelectorAll('#skills-form .stripe-tab').forEach(bar => {
-    logs.push({ student_id: CURRENT_STUDENT_ID, skill_id: bar.dataset.skill, level: parseInt(bar.dataset.level) });
+    writes.push(db.collection('skill_logs').add({
+      student_id: CURRENT_STUDENT_ID,
+      skill_id: bar.dataset.skill,
+      level: parseInt(bar.dataset.level),
+      recorded_at: firebase.firestore.FieldValue.serverTimestamp()
+    }));
   });
-  if(logs.length) await supabaseClient.from('student_skill_logs').insert(logs);
+  await Promise.all(writes);
 
   document.getElementById('modal').classList.add('hidden');
   await loadStudents();
 };
 
-guardAndInit();
+auth.onAuthStateChanged((user) => {
+  if(!user){ window.location.href = 'index.html'; return; }
+  guardAndInit(user);
+});
 </script>
 </body>
 </html>

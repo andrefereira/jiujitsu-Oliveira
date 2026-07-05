@@ -1,12 +1,21 @@
 // ============================================================
-// CONFIGURAÇÃO DO SUPABASE
-// Preencha com os dados do seu projeto (Settings > API no painel Supabase)
+// CONFIGURAÇÃO DO FIREBASE
+// Preencha com os dados do seu projeto:
+// Firebase Console > Configurações do projeto > Seus apps > SDK setup and configuration
 // ============================================================
-window.SUPABASE_URL = "https://SEU-PROJETO.supabase.co";
-window.SUPABASE_ANON_KEY = "SUA_CHAVE_ANON_PUBLICA";
+window.FIREBASE_CONFIG = {
+  apiKey: "SUA_API_KEY",
+  authDomain: "SEU-PROJETO.firebaseapp.com",
+  projectId: "SEU-PROJETO",
+  storageBucket: "SEU-PROJETO.appspot.com",
+  messagingSenderId: "SEU_SENDER_ID",
+  appId: "SEU_APP_ID"
+};
 
 // Lista de habilidades técnicas avaliadas (pode editar livremente).
 // "categoria" agrupa a habilidade no gráfico radar.
+// IMPORTANTE: se editar esta lista, repita a edição ao semear a coleção
+// "skills" no Firestore (veja GUIA_DEPLOY.md).
 window.SKILL_CATALOG_SEED = [
   { nome: "Guarda Fechada", categoria: "Guarda" },
   { nome: "Guarda Aberta", categoria: "Guarda" },

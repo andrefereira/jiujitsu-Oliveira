@@ -5,7 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Minha Progressão</title>
 <link rel="stylesheet" href="assets/style.css">
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://www.gstatic.com/firebasejs/12.15.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/12.15.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/12.15.0/firebase-firestore-compat.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <script src="assets/config.js"></script>
 </head>
@@ -55,7 +57,9 @@
 </div>
 
 <script>
-const supabaseClient = supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY);
+firebase.initializeApp(window.FIREBASE_CONFIG);
+const auth = firebase.auth();
+const db = firebase.firestore();
 
 function nextDueDate(dueDay, today){
   let due = new Date(today.getFullYear(), today.getMonth(), dueDay);
@@ -63,12 +67,10 @@ function nextDueDate(dueDay, today){
   return due;
 }
 
-async function guardAndInit(){
-  const { data: { session } } = await supabaseClient.auth.getSession();
-  if(!session){ window.location.href = 'index.html'; return; }
-
-  const { data: profile } = await supabaseClient.from('profiles').select('*').eq('id', session.user.id).single();
-  if(!profile){ window.location.href = 'index.html'; return; }
+async function guardAndInit(user){
+  const snap = await db.collection('profiles').doc(user.uid).get();
+  if(!snap.exists){ window.location.href = 'index.html'; return; }
+  const profile = { id: user.uid, ...snap.data() };
   if(profile.role === 'professor'){ window.location.href = 'professor.html'; return; }
 
   document.getElementById('who-name').textContent = profile.full_name || profile.email;
@@ -86,7 +88,7 @@ async function guardAndInit(){
   }).join('');
 
   document.getElementById('logout-btn').onclick = async () => {
-    await supabaseClient.auth.signOut();
+    await auth.signOut();
     window.location.href = 'index.html';
   };
 
@@ -95,7 +97,8 @@ async function guardAndInit(){
 }
 
 async function loadFinance(studentId){
-  const { data: info } = await supabaseClient.from('student_payment_info').select('*').eq('student_id', studentId).maybeSingle();
+  const snap = await db.collection('payment_info').doc(studentId).get();
+  const info = snap.exists ? snap.data() : null;
   const box = document.getElementById('finance-cards');
   if(!info){
     box.innerHTML = `<div class="stat" style="grid-column:1/-1;"><div class="label">Financeiro ainda não configurado pelo professor</div></div>`;
@@ -117,18 +120,19 @@ async function loadFinance(studentId){
 }
 
 async function loadSkills(studentId){
-  const { data: skills } = await supabaseClient.from('skills').select('*').order('ordem');
-  const { data: logs } = await supabaseClient
-    .from('student_skill_logs')
-    .select('skill_id, level, recorded_at')
-    .eq('student_id', studentId)
-    .order('recorded_at', { ascending: true });
+  const skillsSnap = await db.collection('skills').orderBy('ordem').get();
+  const skills = skillsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+  if(skills.length === 0) return;
 
-  if(!skills || skills.length === 0) return;
+  const logsSnap = await db.collection('skill_logs')
+    .where('student_id', '==', studentId)
+    .orderBy('recorded_at', 'asc')
+    .get();
+  const logs = logsSnap.docs.map(d => d.data());
 
   // current (latest) level per skill
   const latestBySkill = {};
-  (logs || []).forEach(row => { latestBySkill[row.skill_id] = row.level; });
+  logs.forEach(row => { latestBySkill[row.skill_id] = row.level; });
 
   // --- Radar chart: current snapshot ---
   new Chart(document.getElementById('radar-chart'), {
@@ -152,8 +156,9 @@ async function loadSkills(studentId){
 
   // --- Timeline chart: average level across all skills, per recorded date ---
   const byDate = {};
-  (logs || []).forEach(row => {
-    const d = new Date(row.recorded_at).toLocaleDateString('pt-BR');
+  logs.forEach(row => {
+    const jsDate = row.recorded_at && row.recorded_at.toDate ? row.recorded_at.toDate() : new Date(row.recorded_at);
+    const d = jsDate.toLocaleDateString('pt-BR');
     if(!byDate[d]) byDate[d] = [];
     byDate[d].push(row.level);
   });
@@ -193,7 +198,10 @@ async function loadSkills(studentId){
   }).join('');
 }
 
-guardAndInit();
+auth.onAuthStateChanged((user) => {
+  if(!user){ window.location.href = 'index.html'; return; }
+  guardAndInit(user);
+});
 </script>
 </body>
 </html>
