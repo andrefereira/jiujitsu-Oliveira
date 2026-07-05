@@ -4,12 +4,12 @@
 // Firebase Console > Configurações do projeto > Seus apps > SDK setup and configuration
 // ============================================================
 window.FIREBASE_CONFIG = {
-  apiKey: "SUA_API_KEY",
-  authDomain: "SEU-PROJETO.firebaseapp.com",
-  projectId: "SEU-PROJETO",
-  storageBucket: "SEU-PROJETO.appspot.com",
-  messagingSenderId: "SEU_SENDER_ID",
-  appId: "SEU_APP_ID"
+  apiKey: "AIzaSyAFnTQdGHyDfF71BOjTVOPIguzDRFQZZhQ",
+  authDomain: "jiujitsu-oliveira.firebaseapp.com",
+  projectId: "jiujitsu-oliveira",
+  storageBucket: "jiujitsu-oliveira.firebasestorage.app",
+  messagingSenderId: "274920786630",
+  appId: "1:274920786630:web:019269bf7a7d645f1465c7"
 };
 
 // Lista de habilidades técnicas avaliadas (pode editar livremente).
