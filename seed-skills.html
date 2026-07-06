@@ -40,10 +40,10 @@ auth.onAuthStateChanged(async (user) => {
     statusBox.textContent = 'Você precisa estar logado. Acesse index.html primeiro e depois volte aqui.';
     return;
   }
-  const snap = await db.collection('profiles').doc(user.uid).get();
-  const profile = snap.exists ? snap.data() : null;
-  if(!profile || profile.role !== 'professor'){
-    statusBox.textContent = 'Só o professor pode semear o catálogo. Promova seu usuário a "professor" no console do Firestore primeiro.';
+  const email = (user.email || '').toLowerCase();
+  const snap = await db.collection('professors').doc(email).get();
+  if(!snap.exists){
+    statusBox.textContent = 'Só o professor pode semear o catálogo. Crie um documento com seu e-mail na coleção "professors" no console do Firestore primeiro.';
     return;
   }
   statusBox.textContent = 'Logado como professor. Pronto para semear ' + window.SKILL_CATALOG_SEED.length + ' habilidades.';

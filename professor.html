@@ -39,10 +39,27 @@
     <div class="stat"><div class="num mono" id="stat-pendentes">–</div><div class="label">Pendentes / a vencer</div></div>
   </div>
 
+  <div class="card" style="margin-bottom:24px;">
+    <h3 style="margin-top:0;">Cadastrar novo aluno</h3>
+    <p class="small">O aluno só consegue entrar pelo link mágico depois de cadastrado aqui. Pode cadastrar antes mesmo dele ter usado o sistema.</p>
+    <div class="grid grid-2" style="gap:12px;">
+      <div class="field">
+        <label>Nome completo</label>
+        <input id="new-student-name" type="text" placeholder="Nome do aluno">
+      </div>
+      <div class="field">
+        <label>E-mail</label>
+        <input id="new-student-email" type="email" placeholder="aluno@email.com">
+      </div>
+    </div>
+    <button id="register-student-btn" class="btn">Cadastrar aluno</button>
+    <div id="register-msg"></div>
+  </div>
+
   <div class="card">
     <div class="flex-between" style="margin-bottom:14px;">
       <h3 style="margin:0;">Alunos</h3>
-      <span class="small">Alunos aparecem aqui automaticamente após o primeiro acesso pelo link mágico.</span>
+      <span class="small">Alunos sem login ainda aparecem marcados como "Convite pendente".</span>
     </div>
     <div id="students-table-box"><p class="small">Carregando…</p></div>
   </div>
@@ -98,7 +115,7 @@ firebase.initializeApp(window.FIREBASE_CONFIG);
 const auth = firebase.auth();
 const db = firebase.firestore();
 
-let CURRENT_STUDENT_ID = null;
+let CURRENT_STUDENT_ID = null; // e-mail (minúsculo) do aluno, usado como id do documento
 let SKILLS = [];
 
 function beltOptionsHTML(){
@@ -107,17 +124,55 @@ function beltOptionsHTML(){
 document.getElementById('f-belt').innerHTML = beltOptionsHTML();
 
 async function guardAndInit(user){
-  const snap = await db.collection('profiles').doc(user.uid).get();
-  const profile = snap.exists ? snap.data() : null;
-  if(!profile || profile.role !== 'professor'){ window.location.href = 'aluno.html'; return; }
-  document.getElementById('who-name').textContent = profile.full_name || profile.email;
+  const email = (user.email || '').toLowerCase();
+  const snap = await db.collection('professors').doc(email).get();
+  if(!snap.exists){ window.location.href = 'index.html'; return; }
+  const profile = snap.data();
+  document.getElementById('who-name').textContent = (profile && profile.full_name) || user.email;
 
   document.getElementById('logout-btn').onclick = async () => {
     await auth.signOut();
     window.location.href = 'index.html';
   };
 
+  document.getElementById('register-student-btn').onclick = registerStudent;
+
   await loadSkillCatalog();
+  await loadStudents();
+}
+
+async function registerStudent(){
+  const nameEl = document.getElementById('new-student-name');
+  const emailEl = document.getElementById('new-student-email');
+  const msgBox = document.getElementById('register-msg');
+  const fullName = nameEl.value.trim();
+  const email = emailEl.value.trim().toLowerCase();
+
+  if(!fullName || !email){
+    msgBox.innerHTML = '<div class="msg msg-err">Preencha nome e e-mail.</div>';
+    return;
+  }
+
+  const ref = db.collection('students').doc(email);
+  const existing = await ref.get();
+  if(existing.exists){
+    await ref.set({ full_name: fullName, email }, { merge: true });
+    msgBox.innerHTML = '<div class="msg msg-ok">Aluno já existia — dados atualizados.</div>';
+  } else {
+    await ref.set({
+      full_name: fullName,
+      email,
+      belt: 'Branca',
+      stripes: 0,
+      uid: null,
+      last_login: null,
+      created_at: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    msgBox.innerHTML = '<div class="msg msg-ok">Aluno cadastrado! Ele já pode entrar pelo link mágico quando quiser.</div>';
+  }
+
+  nameEl.value = '';
+  emailEl.value = '';
   await loadStudents();
 }
 
@@ -128,7 +183,7 @@ async function loadSkillCatalog(){
 
 async function loadStudents(){
   const [studentsSnap, paymentsSnap] = await Promise.all([
-    db.collection('profiles').where('role', '==', 'aluno').orderBy('full_name').get(),
+    db.collection('students').orderBy('full_name').get(),
     db.collection('payment_info').get()
   ]);
 
@@ -144,7 +199,7 @@ async function loadStudents(){
   if(students.length === 0){
     document.getElementById('students-table-box').innerHTML =
       `<div class="empty"><div class="display">Nenhum aluno cadastrado ainda</div>
-       <p class="small">Peça para os alunos acessarem o sistema pelo link mágico ao menos uma vez.</p></div>`;
+       <p class="small">Use o formulário acima para cadastrar o primeiro aluno.</p></div>`;
     updateStats([]);
     return;
   }
@@ -164,8 +219,9 @@ async function loadStudents(){
     }
     const beltColor = window.BELT_COLORS[s.belt] || '#666';
     const stripesHTML = [0,1,2,3].map(i => `<i class="${i < (s.stripes||0) ? 'on':''}"></i>`).join('');
+    const pendingTag = !s.uid ? ' <span class="status-tag warn" style="margin-left:6px;">Convite pendente</span>' : '';
     return `<tr>
-      <td>${s.full_name || s.email}</td>
+      <td>${s.full_name || s.email}${pendingTag}</td>
       <td><span class="belt-chip"><span class="belt-swatch" style="background:${beltColor}"></span>${s.belt || '—'}<span class="stripe-tab">${stripesHTML}</span></span></td>
       <td class="mono">${info ? 'R$ ' + Number(info.monthly_fee).toFixed(2) : '–'}</td>
       <td class="mono">${nextDue}</td>
@@ -208,7 +264,7 @@ function updateStats(students){
 async function openManage(studentId){
   CURRENT_STUDENT_ID = studentId;
   const [studentSnap, paySnap, logsSnap] = await Promise.all([
-    db.collection('profiles').doc(studentId).get(),
+    db.collection('students').doc(studentId).get(),
     db.collection('payment_info').doc(studentId).get(),
     db.collection('skill_logs').where('student_id', '==', studentId).orderBy('recorded_at', 'desc').get()
   ]);
@@ -238,7 +294,6 @@ async function openManage(studentId){
     </div>`;
   }).join('');
 
-  // click-to-set level (0-5 pelo número de listras acesas)
   document.querySelectorAll('#skills-form .stripe-tab').forEach(bar => {
     bar.querySelectorAll('i').forEach(dot => {
       dot.style.cursor = 'pointer';
@@ -264,7 +319,7 @@ document.getElementById('modal-save').onclick = async () => {
   const dueDay = parseInt(document.getElementById('f-due-day').value || 0);
   const active = document.getElementById('f-active').value === 'true';
 
-  await db.collection('profiles').doc(CURRENT_STUDENT_ID).set({ belt, stripes }, { merge: true });
+  await db.collection('students').doc(CURRENT_STUDENT_ID).set({ belt, stripes }, { merge: true });
 
   await db.collection('payment_info').doc(CURRENT_STUDENT_ID).set({
     monthly_fee: fee,

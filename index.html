@@ -16,6 +16,7 @@
     <div class="belt-strip-lg"></div>
     <h1>Área do Aluno &amp; Professor</h1>
     <p class="lead">Entre com seu e-mail. Enviaremos um link mágico de acesso — sem senha.</p>
+    <p class="small">Alunos precisam ser cadastrados pelo professor antes do primeiro acesso.</p>
 
     <div id="form-box">
       <div class="field">
@@ -51,6 +52,11 @@ function showLoading(){
   loadingBox.classList.remove('hidden');
 }
 
+function showForm(){
+  loadingBox.classList.add('hidden');
+  formBox.classList.remove('hidden');
+}
+
 sendBtn.addEventListener('click', async () => {
   const email = document.getElementById('email').value.trim();
   if(!email){ showMsg('Informe um e-mail válido.', 'err'); return; }
@@ -71,58 +77,57 @@ sendBtn.addEventListener('click', async () => {
   sendBtn.textContent = 'Enviar link de acesso';
 });
 
+// Depois de autenticado no Firebase, decide se a pessoa está autorizada
+// a entrar: precisa já existir um cadastro em "professors" ou "students"
+// (feito pelo professor). Se não existir, barra o acesso e desloga.
 async function redirectByRole(user){
   showLoading();
+  const email = (user.email || '').toLowerCase();
 
-  const ref = db.collection('profiles').doc(user.uid);
-  const snap = await ref.get();
-  let profile;
-
-  // Se o perfil ainda não existir (primeiro login), cria como "aluno" por padrão.
-  if(!snap.exists){
-    profile = {
-      email: user.email,
-      full_name: user.email,
-      role: 'aluno',
-      belt: 'Branca',
-      stripes: 0,
-      created_at: firebase.firestore.FieldValue.serverTimestamp()
-    };
-    await ref.set(profile);
-  } else {
-    profile = snap.data();
-  }
-
-  if(profile && profile.role === 'professor'){
+  const profSnap = await db.collection('professors').doc(email).get();
+  if(profSnap.exists){
     window.location.href = 'professor.html';
-  } else {
-    window.location.href = 'aluno.html';
-  }
-}
-
-(async () => {
-  // Concluindo login vindo do link mágico (email link)?
-  if(auth.isSignInWithEmailLink(window.location.href)){
-    let email = window.localStorage.getItem('emailForSignIn');
-    if(!email){
-      email = window.prompt('Confirme o e-mail usado para pedir o link de acesso:');
-    }
-    try {
-      const result = await auth.signInWithEmailLink(email, window.location.href);
-      window.localStorage.removeItem('emailForSignIn');
-      window.history.replaceState({}, document.title, window.location.pathname);
-      await redirectByRole(result.user);
-    } catch (error) {
-      showMsg('Não foi possível concluir o login: ' + error.message, 'err');
-    }
     return;
   }
 
-  // Sessão já ativa?
+  const studentRef = db.collection('students').doc(email);
+  const studentSnap = await studentRef.get();
+  if(studentSnap.exists){
+    await studentRef.set({
+      uid: user.uid,
+      last_login: firebase.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+    window.location.href = 'aluno.html';
+    return;
+  }
+
+  await auth.signOut();
+  showForm();
+  showMsg('Este e-mail ainda não foi cadastrado pelo professor. Peça para ele te cadastrar antes de tentar entrar.', 'err');
+}
+
+async function completeEmailLinkSignIn(){
+  let email = window.localStorage.getItem('emailForSignIn');
+  if(!email){
+    email = window.prompt('Confirme o e-mail usado para pedir o link de acesso:');
+  }
+  try {
+    const result = await auth.signInWithEmailLink(email, window.location.href);
+    window.localStorage.removeItem('emailForSignIn');
+    window.history.replaceState({}, document.title, window.location.pathname);
+    await redirectByRole(result.user);
+  } catch (error) {
+    showMsg('Não foi possível concluir o login: ' + error.message, 'err');
+  }
+}
+
+if(auth.isSignInWithEmailLink(window.location.href)){
+  completeEmailLinkSignIn();
+} else {
   auth.onAuthStateChanged((user) => {
     if(user){ redirectByRole(user); }
   });
-})();
+}
 </script>
 </body>
 </html>

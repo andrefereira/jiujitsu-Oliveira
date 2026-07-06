@@ -68,10 +68,18 @@ function nextDueDate(dueDay, today){
 }
 
 async function guardAndInit(user){
-  const snap = await db.collection('profiles').doc(user.uid).get();
-  if(!snap.exists){ window.location.href = 'index.html'; return; }
-  const profile = { id: user.uid, ...snap.data() };
-  if(profile.role === 'professor'){ window.location.href = 'professor.html'; return; }
+  const email = (user.email || '').toLowerCase();
+
+  const profSnap = await db.collection('professors').doc(email).get();
+  if(profSnap.exists){ window.location.href = 'professor.html'; return; }
+
+  const snap = await db.collection('students').doc(email).get();
+  if(!snap.exists){
+    await auth.signOut();
+    window.location.href = 'index.html';
+    return;
+  }
+  const profile = { id: email, ...snap.data() };
 
   document.getElementById('who-name').textContent = profile.full_name || profile.email;
   const belt = profile.belt || 'Branca';
@@ -130,11 +138,9 @@ async function loadSkills(studentId){
     .get();
   const logs = logsSnap.docs.map(d => d.data());
 
-  // current (latest) level per skill
   const latestBySkill = {};
   logs.forEach(row => { latestBySkill[row.skill_id] = row.level; });
 
-  // --- Radar chart: current snapshot ---
   new Chart(document.getElementById('radar-chart'), {
     type: 'radar',
     data: {
@@ -154,7 +160,6 @@ async function loadSkills(studentId){
     }
   });
 
-  // --- Timeline chart: average level across all skills, per recorded date ---
   const byDate = {};
   logs.forEach(row => {
     const jsDate = row.recorded_at && row.recorded_at.toDate ? row.recorded_at.toDate() : new Date(row.recorded_at);
@@ -187,7 +192,6 @@ async function loadSkills(studentId){
     }
   });
 
-  // --- Detail list ---
   document.getElementById('skills-list').innerHTML = skills.map(s => {
     const level = latestBySkill[s.id] ?? 0;
     const dots = [0,1,2,3,4].map(i => `<i class="${i < level ? 'on':''}"></i>`).join('');
