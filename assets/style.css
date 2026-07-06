@@ -229,3 +229,28 @@ tr:hover td{ background:rgba(28,25,19,0.025); }
 .msg{ font-size:13px; padding:10px 12px; border-radius:2px; margin-top:14px; border-left:3px solid; }
 .msg-ok{ background:rgba(62,107,74,.08); color:#2E5138; border-color:var(--belt-green); }
 .msg-err{ background:rgba(156,59,46,.08); color:var(--belt-red); border-color:var(--belt-red); }
+
+/* ================= responsivo (celular) ================= */
+@media (max-width:640px){
+  .wrap{ padding:0 14px; }
+
+  .topbar .wrap{ height:auto; flex-wrap:wrap; padding-top:10px; padding-bottom:10px; gap:8px 14px; }
+  .nav-links{ order:3; width:100%; }
+  .who{ font-size:11px; gap:8px; max-width:55vw; }
+  .who .mono{ max-width:110px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; display:inline-block; vertical-align:middle; }
+
+  .header-row h1{ font-size:24px; }
+  .page{ padding:22px 0 40px; }
+
+  .card{ padding:16px; }
+  .modal{ padding:18px; }
+  .modal-actions{ flex-wrap:wrap; }
+  .modal-actions .btn, .modal-actions .btn-outline{ flex:1; }
+
+  /* tabela de alunos: em vez de espremer colunas ate ficar ilegivel, deixa rolar de lado */
+  #students-table-box{ overflow-x:auto; -webkit-overflow-scrolling:touch; }
+  #students-table-box table{ min-width:620px; }
+
+  .auth-card{ padding:26px 20px; }
+}
+}
