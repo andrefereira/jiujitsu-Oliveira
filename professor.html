@@ -31,6 +31,15 @@
       <h1>Painel do Professor</h1>
       <div class="subtitle">Gerencie faixas, habilidades e mensalidades de cada aluno.</div>
     </div>
+    <div style="position:relative;">
+      <button id="notif-bell" class="btn-outline">
+        Cobranças <span id="notif-badge" class="status-tag danger hidden" style="margin-left:6px;"></span>
+      </button>
+      <div id="notif-panel" class="card hidden" style="position:absolute; right:0; top:44px; width:320px; z-index:40; max-height:360px; overflow:auto;">
+        <h3 style="margin-top:0;">Mensalidades a cobrar</h3>
+        <div id="notif-list"></div>
+      </div>
+    </div>
   </div>
 
   <div class="grid grid-3" style="margin-bottom:24px;">
@@ -51,6 +60,10 @@
         <label>E-mail</label>
         <input id="new-student-email" type="email" placeholder="aluno@email.com">
       </div>
+    </div>
+    <div class="field">
+      <label>WhatsApp (opcional, DDI+DDD+número, ex: 5511999998888)</label>
+      <input id="new-student-phone" type="text" placeholder="5511999998888">
     </div>
     <button id="register-student-btn" class="btn">Cadastrar aluno</button>
     <div id="register-msg"></div>
@@ -99,6 +112,10 @@
         <option value="false">Inativo / trancado</option>
       </select>
     </div>
+    <div class="field">
+      <label>WhatsApp (DDI+DDD+número, ex: 5511999998888)</label>
+      <input id="f-phone" type="text" placeholder="5511999998888">
+    </div>
 
     <h3 style="margin-top:22px;">Habilidades técnicas</h3>
     <div id="skills-form" class="grid" style="gap:10px;"></div>
@@ -110,6 +127,25 @@
   </div>
 </div>
 
+<!-- ================= MODAL: cobrar mensalidade ================= -->
+<div class="modal-overlay hidden" id="billing-modal">
+  <div class="modal" style="max-width:440px;">
+    <h3>Cobrar mensalidade</h3>
+    <p class="small" id="billing-student-name" style="margin-bottom:14px;"></p>
+    <div class="field">
+      <label>Mensagem</label>
+      <textarea id="billing-message" rows="5" style="width:100%; background:var(--paper-2); border:1px solid var(--line); border-radius:3px; padding:9px 11px; font:inherit; font-size:14px; color:var(--ink); resize:vertical;"></textarea>
+    </div>
+    <div class="modal-actions" style="justify-content:space-between; flex-wrap:wrap;">
+      <button class="btn-outline" id="billing-cancel">Cancelar</button>
+      <div style="display:flex; gap:10px; flex-wrap:wrap;">
+        <button class="btn-outline" id="billing-email">Enviar por e-mail</button>
+        <button class="btn" id="billing-whatsapp">Enviar por WhatsApp</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script>
 firebase.initializeApp(window.FIREBASE_CONFIG);
 const auth = firebase.auth();
@@ -117,6 +153,9 @@ const db = firebase.firestore();
 
 let CURRENT_STUDENT_ID = null; // e-mail (minúsculo) do aluno, usado como id do documento
 let SKILLS = [];
+let LAST_STUDENTS = [];
+let BILLING_STUDENT = null;
+const PIX_KEY = 'neuender@gmail.com';
 
 function beltOptionsHTML(){
   return Object.keys(window.BELT_COLORS).map(b => `<option value="${b}">${b}</option>`).join('');
@@ -137,6 +176,21 @@ async function guardAndInit(user){
 
   document.getElementById('register-student-btn').onclick = registerStudent;
 
+  document.getElementById('notif-bell').onclick = () => {
+    document.getElementById('notif-panel').classList.toggle('hidden');
+  };
+  document.addEventListener('click', (ev) => {
+    const panel = document.getElementById('notif-panel');
+    const bell = document.getElementById('notif-bell');
+    if(!panel.contains(ev.target) && !bell.contains(ev.target)){
+      panel.classList.add('hidden');
+    }
+  });
+
+  document.getElementById('billing-cancel').onclick = () => document.getElementById('billing-modal').classList.add('hidden');
+  document.getElementById('billing-email').onclick = sendBillingEmail;
+  document.getElementById('billing-whatsapp').onclick = sendBillingWhatsapp;
+
   await loadSkillCatalog();
   await loadStudents();
 }
@@ -144,9 +198,11 @@ async function guardAndInit(user){
 async function registerStudent(){
   const nameEl = document.getElementById('new-student-name');
   const emailEl = document.getElementById('new-student-email');
+  const phoneEl = document.getElementById('new-student-phone');
   const msgBox = document.getElementById('register-msg');
   const fullName = nameEl.value.trim();
   const email = emailEl.value.trim().toLowerCase();
+  const phone = phoneEl.value.trim().replace(/\D/g, '');
 
   if(!fullName || !email){
     msgBox.innerHTML = '<div class="msg msg-err">Preencha nome e e-mail.</div>';
@@ -156,12 +212,15 @@ async function registerStudent(){
   const ref = db.collection('students').doc(email);
   const existing = await ref.get();
   if(existing.exists){
-    await ref.set({ full_name: fullName, email }, { merge: true });
+    const patch = { full_name: fullName, email };
+    if(phone) patch.phone = phone;
+    await ref.set(patch, { merge: true });
     msgBox.innerHTML = '<div class="msg msg-ok">Aluno já existia — dados atualizados.</div>';
   } else {
     await ref.set({
       full_name: fullName,
       email,
+      phone: phone || null,
       belt: 'Branca',
       stripes: 0,
       uid: null,
@@ -173,6 +232,7 @@ async function registerStudent(){
 
   nameEl.value = '';
   emailEl.value = '';
+  phoneEl.value = '';
   await loadStudents();
 }
 
@@ -195,6 +255,9 @@ async function loadStudents(){
     ...d.data(),
     payment_info: paymentsById[d.id] || null
   }));
+
+  LAST_STUDENTS = students;
+  renderNotifications(computeNotifications(students));
 
   if(students.length === 0){
     document.getElementById('students-table-box').innerHTML =
@@ -261,6 +324,99 @@ function updateStats(students){
   document.getElementById('stat-pendentes').textContent = pendentes;
 }
 
+// ---------- notificações de cobrança ----------
+// Usa o dia de vencimento do MÊS ATUAL (sem rolar pro próximo mês) pra
+// conseguir detectar mensalidade atrasada, diferente da tabela acima
+// (que sempre mostra a próxima data futura).
+function computeNotifications(students){
+  const today = new Date();
+  const list = [];
+  students.forEach(s => {
+    const info = s.payment_info;
+    if(!info || !info.due_day || !info.active) return;
+    const thisMonthDue = new Date(today.getFullYear(), today.getMonth(), info.due_day);
+    const diffDays = Math.ceil((thisMonthDue - today) / 86400000);
+    if(diffDays < 0){
+      list.push({ student: s, late: true, diffDays });
+    } else if(diffDays <= 3){
+      list.push({ student: s, late: false, diffDays });
+    }
+  });
+  list.sort((a, b) => (a.late === b.late) ? (a.diffDays - b.diffDays) : (a.late ? -1 : 1));
+  return list;
+}
+
+function renderNotifications(list){
+  const badge = document.getElementById('notif-badge');
+  if(list.length === 0){
+    badge.classList.add('hidden');
+  } else {
+    badge.textContent = list.length;
+    badge.classList.remove('hidden');
+  }
+
+  const box = document.getElementById('notif-list');
+  if(list.length === 0){
+    box.innerHTML = '<p class="small" style="padding:8px 0;">Nenhuma mensalidade próxima ou atrasada.</p>';
+    return;
+  }
+  box.innerHTML = list.map(item => {
+    const s = item.student;
+    const label = item.late ? 'Atrasada' : 'Vence em breve';
+    const tagClass = item.late ? 'danger' : 'warn';
+    return `<div class="flex-between" style="padding:10px 0;border-bottom:1px dashed var(--line);gap:10px;">
+      <div>
+        <div style="font-weight:600;font-size:13px;">${s.full_name || s.email}</div>
+        <span class="status-tag ${tagClass}">${label}</span>
+      </div>
+      <button class="btn-outline" style="padding:6px 12px;font-size:11px;flex-shrink:0;" onclick="openBilling('${s.id}', ${item.late})">Cobrar</button>
+    </div>`;
+  }).join('');
+}
+
+function buildBillingMessage(student, late){
+  const info = student.payment_info;
+  const fee = info ? Number(info.monthly_fee).toFixed(2) : '0.00';
+  const situacao = late ? 'atrasada' : 'próximo do vencimento';
+  return `Sua mensalidade de R$ ${fee} está ${situacao}, faça o pagamento via pix para a chave ${PIX_KEY}`;
+}
+
+function openBilling(studentId, late){
+  const student = LAST_STUDENTS.find(s => s.id === studentId);
+  if(!student) return;
+  BILLING_STUDENT = student;
+  document.getElementById('billing-student-name').textContent = student.full_name || student.email;
+  document.getElementById('billing-message').value = buildBillingMessage(student, late);
+  document.getElementById('notif-panel').classList.add('hidden');
+  document.getElementById('billing-modal').classList.remove('hidden');
+}
+
+function sendBillingEmail(){
+  const student = BILLING_STUDENT;
+  if(!student) return;
+  const message = document.getElementById('billing-message').value;
+  const subject = encodeURIComponent('Mensalidade — Academia');
+  const body = encodeURIComponent(message);
+  window.location.href = `mailto:${student.email}?subject=${subject}&body=${body}`;
+}
+
+async function sendBillingWhatsapp(){
+  const student = BILLING_STUDENT;
+  if(!student) return;
+  const message = document.getElementById('billing-message').value;
+  let phone = (student.phone || '').replace(/\D/g, '');
+  if(!phone){
+    const typed = window.prompt('WhatsApp do aluno ainda não cadastrado. Digite com DDI+DDD, ex: 5511999998888:');
+    if(!typed) return;
+    phone = typed.replace(/\D/g, '');
+    if(!phone) return;
+    await db.collection('students').doc(student.id).set({ phone }, { merge: true });
+    student.phone = phone;
+  }
+  const text = encodeURIComponent(message);
+  window.open(`https://wa.me/${phone}?text=${text}`, '_blank');
+}
+
 async function openManage(studentId){
   CURRENT_STUDENT_ID = studentId;
   const [studentSnap, paySnap, logsSnap] = await Promise.all([
@@ -284,6 +440,7 @@ async function openManage(studentId){
   document.getElementById('f-fee').value = payInfo ? payInfo.monthly_fee : '';
   document.getElementById('f-due-day').value = payInfo ? payInfo.due_day : '';
   document.getElementById('f-active').value = payInfo ? String(payInfo.active) : 'true';
+  document.getElementById('f-phone').value = student.phone || '';
 
   document.getElementById('skills-form').innerHTML = SKILLS.map(sk => {
     const level = latestBySkill[sk.id] ?? 0;
@@ -294,6 +451,7 @@ async function openManage(studentId){
     </div>`;
   }).join('');
 
+  // click-to-set level (0-5 pelo número de listras acesas)
   document.querySelectorAll('#skills-form .stripe-tab').forEach(bar => {
     bar.querySelectorAll('i').forEach(dot => {
       dot.style.cursor = 'pointer';
@@ -318,8 +476,9 @@ document.getElementById('modal-save').onclick = async () => {
   const fee = parseFloat(document.getElementById('f-fee').value || 0);
   const dueDay = parseInt(document.getElementById('f-due-day').value || 0);
   const active = document.getElementById('f-active').value === 'true';
+  const phone = document.getElementById('f-phone').value.trim().replace(/\D/g, '');
 
-  await db.collection('students').doc(CURRENT_STUDENT_ID).set({ belt, stripes }, { merge: true });
+  await db.collection('students').doc(CURRENT_STUDENT_ID).set({ belt, stripes, phone: phone || null }, { merge: true });
 
   await db.collection('payment_info').doc(CURRENT_STUDENT_ID).set({
     monthly_fee: fee,
