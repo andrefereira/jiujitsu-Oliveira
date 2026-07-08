@@ -461,8 +461,10 @@ function renderNotifications(list){
 function buildBillingMessage(student, late){
   const info = student.payment_info;
   const fee = info ? Number(info.monthly_fee).toFixed(2) : '0.00';
-  const situacao = late ? 'atrasada' : 'próximo do vencimento';
-  return `Sua mensalidade de R$ ${fee} está ${situacao}, faça o pagamento via pix para a chave ${PIX_KEY}`;
+  if(late){
+    return `Olá! Notamos que sua mensalidade de R$ ${fee} está em aberto. Poderia regularizar o pagamento via Pix (chave: ${PIX_KEY}) assim que possível? Se já tiver pago, desconsidere esta mensagem.\n\nProfessor Neuender`;
+  }
+  return `Olá! Passando para lembrar que sua mensalidade de R$ ${fee} vence em breve. Para facilitar, você pode pagar via Pix na chave ${PIX_KEY}. Qualquer dúvida, é só chamar!\n\nProfessor Neuender`;
 }
 
 function openBilling(studentId, late){
