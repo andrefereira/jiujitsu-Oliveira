@@ -67,6 +67,15 @@ function nextDueDate(dueDay, today){
   return due;
 }
 
+// Data de vencimento "oficial": usa o campo next_due_date salvo pelo
+// professor (editado na ficha ou avançado ao marcar como pago). Sem isso,
+// esta tela recalculava a data sozinha e nunca refletia as alterações
+// feitas pelo professor — por isso o vencimento não atualizava aqui.
+function getNextDueDate(info, today){
+  if(info && info.next_due_date && info.next_due_date.toDate) return info.next_due_date.toDate();
+  return nextDueDate(info.due_day, today);
+}
+
 async function guardAndInit(user){
   const email = (user.email || '').toLowerCase();
 
@@ -113,7 +122,7 @@ async function loadFinance(studentId){
     return;
   }
   const today = new Date();
-  const due = nextDueDate(info.due_day, today);
+  const due = getNextDueDate(info, today);
   const diffDays = Math.ceil((due - today) / 86400000);
   let statusHtml = '<span class="status-tag ok">Em dia</span>';
   let barColor = 'var(--belt-green)';
