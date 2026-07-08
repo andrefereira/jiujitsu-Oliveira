@@ -32,12 +32,11 @@ window.SKILL_CATALOG_SEED = [
 ];
 
 // Cores por faixa (tons foscos, como tecido real — usadas no belt-swatch)
+// Só faixas adultas — o app é focado em público adulto, então as faixas
+// infantis (cinza, amarela, laranja, verde) foram removidas daqui de
+// propósito, o que também as tira do seletor de faixa na ficha do aluno.
 window.BELT_COLORS = {
   "Branca": "#EDE9DC",
-  "Cinza":  "#8B8377",
-  "Amarela":"#C9A227",
-  "Laranja":"#B5651D",
-  "Verde":  "#3E6B4A",
   "Azul":   "#1D4E7A",
   "Roxa":   "#5B3E73",
   "Marrom": "#5E3A22",
