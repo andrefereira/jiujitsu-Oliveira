@@ -35,7 +35,7 @@
       <button id="notif-bell" class="btn-outline">
         Cobranças <span id="notif-badge" class="status-tag danger hidden" style="margin-left:6px;"></span>
       </button>
-      <div id="notif-panel" class="card hidden" style="position:absolute; right:0; top:44px; width:340px; z-index:40; max-height:360px; overflow:auto;">
+      <div id="notif-panel" class="card hidden">
         <h3 style="margin-top:0;">Mensalidades a cobrar</h3>
         <div id="notif-list"></div>
       </div>
@@ -112,13 +112,16 @@
         <option value="false">Inativo / trancado</option>
       </select>
     </div>
-    <div class="flex-between" style="margin:4px 0 15px; padding:10px 12px; background:var(--paper-2); border-radius:3px;">
-      <div>
-        <div class="small" style="margin-bottom:2px;">Próximo vencimento</div>
-        <div class="mono" id="f-next-due" style="font-weight:600;">–</div>
+    <div class="grid grid-2" style="align-items:end;">
+      <div class="field" style="margin-bottom:0;">
+        <label>Próximo vencimento</label>
+        <input id="f-next-due-input" type="date">
       </div>
-      <button class="btn-outline" id="f-mark-paid" style="padding:8px 14px;font-size:11px;">Marcar como pago</button>
+      <div class="field" style="margin-bottom:0;">
+        <button class="btn-outline btn-block" id="f-mark-paid" style="padding:10px 14px;font-size:11px;">Marcar como pago</button>
+      </div>
     </div>
+    <div class="small" id="f-next-due-status" style="margin:6px 0 15px;"></div>
     <div class="field">
       <label>WhatsApp (DDI+DDD+número, ex: 5511999998888)</label>
       <input id="f-phone" type="text" placeholder="5511999998888">
@@ -202,6 +205,20 @@ async function guardAndInit(user){
     if(CURRENT_STUDENT_ID) markAsPaid(CURRENT_STUDENT_ID);
   };
 
+  document.getElementById('f-next-due-input').addEventListener('change', refreshDueStatusFromInput);
+
+  // Se o professor mudar o dia de vencimento e o campo de data ainda estiver
+  // vazio (aluno novo, sem mensalidade configurada), sugere uma data.
+  document.getElementById('f-due-day').addEventListener('input', () => {
+    const dueInput = document.getElementById('f-next-due-input');
+    if(dueInput.value) return;
+    const day = parseInt(document.getElementById('f-due-day').value);
+    if(day >= 1 && day <= 28){
+      dueInput.value = toDateInputValue(nextDueDate(day, new Date()));
+      refreshDueStatusFromInput();
+    }
+  });
+
   await loadSkillCatalog();
   await loadStudents();
 }
@@ -268,6 +285,20 @@ function nextDueDate(dueDay, today){
 function getNextDueDate(info, today){
   if(info && info.next_due_date && info.next_due_date.toDate) return info.next_due_date.toDate();
   return nextDueDate(info.due_day, today);
+}
+
+// Formata Date -> "YYYY-MM-DD" (valor esperado por <input type="date">), em horário local (evita o bug de virar um dia por causa de UTC).
+function toDateInputValue(date){
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+// Faz o inverso, também em horário local.
+function parseDateInputValue(value){
+  const [y, m, d] = value.split('-').map(Number);
+  return new Date(y, m - 1, d);
 }
 
 async function loadStudents(){
@@ -469,21 +500,37 @@ async function markAsPaid(studentId){
   }
 }
 
+// Preenche o campo de data (editável) a partir do payment_info salvo no Firestore.
 function updateFichaDueUI(info){
-  const today = new Date();
-  const dueEl = document.getElementById('f-next-due');
-  const btn = document.getElementById('f-mark-paid');
+  const input = document.getElementById('f-next-due-input');
   if(!info || !info.due_day){
-    dueEl.textContent = '–';
+    input.value = '';
+    refreshDueStatusFromInput();
+    return;
+  }
+  const due = getNextDueDate(info, new Date());
+  input.value = toDateInputValue(due);
+  refreshDueStatusFromInput();
+}
+
+// Recalcula o texto de status ("atrasada"/"vence em breve"/"em dia") e se o
+// botão "Marcar como pago" fica habilitado, a partir do que estiver no campo
+// de data agora (inclusive se o professor tiver editado manualmente).
+function refreshDueStatusFromInput(){
+  const input = document.getElementById('f-next-due-input');
+  const statusEl = document.getElementById('f-next-due-status');
+  const btn = document.getElementById('f-mark-paid');
+  if(!input.value){
+    statusEl.textContent = '';
     btn.disabled = true;
     return;
   }
-  const due = getNextDueDate(info, today);
+  const today = new Date();
+  const due = parseDateInputValue(input.value);
   const diffDays = Math.ceil((due - today) / 86400000);
-  let suffix = '';
-  if(diffDays < 0) suffix = ' (atrasada)';
-  else if(diffDays <= 3) suffix = ' (vence em breve)';
-  dueEl.textContent = due.toLocaleDateString('pt-BR') + suffix;
+  if(diffDays < 0) statusEl.innerHTML = '<span class="status-tag danger">Atrasada</span>';
+  else if(diffDays <= 3) statusEl.innerHTML = '<span class="status-tag warn">Vence em breve</span>';
+  else statusEl.innerHTML = '<span class="status-tag ok">Em dia</span>';
   btn.disabled = !(diffDays <= 3);
 }
 
@@ -552,8 +599,6 @@ document.getElementById('modal-save').onclick = async () => {
   await db.collection('students').doc(CURRENT_STUDENT_ID).set({ belt, stripes, phone: phone || null }, { merge: true });
 
   const payRef = db.collection('payment_info').doc(CURRENT_STUDENT_ID);
-  const paySnap = await payRef.get();
-  const existing = paySnap.exists ? paySnap.data() : null;
 
   const patch = {
     monthly_fee: fee,
@@ -561,11 +606,13 @@ document.getElementById('modal-save').onclick = async () => {
     active,
     updated_at: firebase.firestore.FieldValue.serverTimestamp()
   };
-  // Só recalcula a data de vencimento se for a primeira vez ou se o dia mudou —
-  // assim não perde o progresso de "marcar como pago" só por salvar de novo.
-  if(!existing || !existing.next_due_date || existing.due_day !== dueDay){
-    patch.next_due_date = firebase.firestore.Timestamp.fromDate(nextDueDate(dueDay, new Date()));
-  }
+  // O campo de vencimento é editável na ficha (já vem preenchido com o valor
+  // salvo ao abrir); usa exatamente o que estiver nele. Só recorre ao cálculo
+  // automático se, por algum motivo, estiver vazio.
+  const dueInputVal = document.getElementById('f-next-due-input').value;
+  patch.next_due_date = firebase.firestore.Timestamp.fromDate(
+    dueInputVal ? parseDateInputValue(dueInputVal) : nextDueDate(dueDay, new Date())
+  );
   await payRef.set(patch, { merge: true });
 
   const writes = [];
