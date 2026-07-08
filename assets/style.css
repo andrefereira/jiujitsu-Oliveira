@@ -207,13 +207,17 @@ tr:hover td{ background:rgba(28,25,19,0.025); }
 .tag-cat{ font-size:10px; color:var(--ink-dim); text-transform:uppercase; letter-spacing:.06em; font-weight:600; }
 
 /* ================= modal ================= */
-.modal-overlay{ position:fixed; inset:0; background:rgba(28,25,19,.55); display:flex; align-items:center; justify-content:center; z-index:50; padding:20px; }
+.modal-overlay{ position:fixed; inset:0; background:rgba(28,25,19,.55); display:flex; align-items:center; justify-content:center; z-index:50; padding:20px; overflow-y:auto; }
 .modal{
   background:var(--paper); border:1px solid var(--line); border-top:4px solid var(--belt-black);
   border-radius:2px; padding:26px; width:100%; max-width:440px; max-height:86vh; overflow:auto;
+  margin:auto;
 }
 .modal h3{ font-size:17px; margin-bottom:16px; padding-bottom:8px; border-bottom:1px dashed var(--line); }
 .modal-actions{ display:flex; gap:10px; justify-content:flex-end; margin-top:18px; }
+
+/* dropdown de notificações de cobrança (professor.html) */
+#notif-panel{ position:absolute; right:0; top:44px; width:340px; z-index:40; max-height:360px; overflow:auto; }
 
 .hidden{ display:none !important; }
 .flex-between{ display:flex; align-items:center; justify-content:space-between; }
@@ -243,14 +247,23 @@ tr:hover td{ background:rgba(28,25,19,0.025); }
   .page{ padding:22px 0 40px; }
 
   .card{ padding:16px; }
-  .modal{ padding:18px; }
+
+  /* No celular, o teclado (ex.: textarea de cobrança) reduz a altura visível
+     da tela. Centralizar o modal verticalmente faz ele "desaparecer" pra fora
+     da área visível nesse caso — em vez disso, ancora no topo e deixa a
+     própria camada de fundo rolar até os botões. */
+  .modal-overlay{ align-items:flex-start; padding:14px; }
+  .modal{ padding:18px; max-height:none; margin-top:6px; }
   .modal-actions{ flex-wrap:wrap; }
   .modal-actions .btn, .modal-actions .btn-outline{ flex:1; }
+
+  /* dropdown de notificações: largura fixa de 340px não cabe em telas
+     pequenas — trava na largura disponível da tela. */
+  #notif-panel{ width:calc(100vw - 28px); max-width:340px; }
 
   /* tabela de alunos: em vez de espremer colunas ate ficar ilegivel, deixa rolar de lado */
   #students-table-box{ overflow-x:auto; -webkit-overflow-scrolling:touch; }
   #students-table-box table{ min-width:620px; }
 
   .auth-card{ padding:26px 20px; }
-}
 }
