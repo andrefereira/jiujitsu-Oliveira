@@ -35,7 +35,7 @@
       <button id="notif-bell" class="btn-outline">
         Cobranças <span id="notif-badge" class="status-tag danger hidden" style="margin-left:6px;"></span>
       </button>
-      <div id="notif-panel" class="card hidden" style="position:absolute; right:0; top:44px; width:320px; z-index:40; max-height:360px; overflow:auto;">
+      <div id="notif-panel" class="card hidden" style="position:absolute; right:0; top:44px; width:340px; z-index:40; max-height:360px; overflow:auto;">
         <h3 style="margin-top:0;">Mensalidades a cobrar</h3>
         <div id="notif-list"></div>
       </div>
@@ -111,6 +111,13 @@
         <option value="true">Ativo</option>
         <option value="false">Inativo / trancado</option>
       </select>
+    </div>
+    <div class="flex-between" style="margin:4px 0 15px; padding:10px 12px; background:var(--paper-2); border-radius:3px;">
+      <div>
+        <div class="small" style="margin-bottom:2px;">Próximo vencimento</div>
+        <div class="mono" id="f-next-due" style="font-weight:600;">–</div>
+      </div>
+      <button class="btn-outline" id="f-mark-paid" style="padding:8px 14px;font-size:11px;">Marcar como pago</button>
     </div>
     <div class="field">
       <label>WhatsApp (DDI+DDD+número, ex: 5511999998888)</label>
@@ -191,6 +198,10 @@ async function guardAndInit(user){
   document.getElementById('billing-email').onclick = sendBillingEmail;
   document.getElementById('billing-whatsapp').onclick = sendBillingWhatsapp;
 
+  document.getElementById('f-mark-paid').onclick = () => {
+    if(CURRENT_STUDENT_ID) markAsPaid(CURRENT_STUDENT_ID);
+  };
+
   await loadSkillCatalog();
   await loadStudents();
 }
@@ -241,6 +252,24 @@ async function loadSkillCatalog(){
   SKILLS = snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 
+// Data de vencimento "de referência", rolando pra frente a partir de hoje.
+// Usada só quando ainda não existe next_due_date salvo (registro antigo)
+// ou na primeira vez que a mensalidade é configurada.
+function nextDueDate(dueDay, today){
+  let due = new Date(today.getFullYear(), today.getMonth(), dueDay);
+  if(due < today) due = new Date(today.getFullYear(), today.getMonth()+1, dueDay);
+  return due;
+}
+
+// Data de vencimento "oficial" do aluno: usa o campo salvo next_due_date
+// (que só muda quando o professor marca como pago, ou quando o dia de
+// vencimento é alterado na ficha). Isso é o que permite detectar atraso de
+// verdade, diferente de simplesmente rolar sempre pra frente a partir de hoje.
+function getNextDueDate(info, today){
+  if(info && info.next_due_date && info.next_due_date.toDate) return info.next_due_date.toDate();
+  return nextDueDate(info.due_day, today);
+}
+
 async function loadStudents(){
   const [studentsSnap, paymentsSnap] = await Promise.all([
     db.collection('students').orderBy('full_name').get(),
@@ -273,10 +302,11 @@ async function loadStudents(){
     let statusTag = '<span class="status-tag warn">Sem mensalidade</span>';
     let nextDue = '–';
     if(info && info.due_day){
-      const due = nextDueDate(info.due_day, today);
+      const due = getNextDueDate(info, today);
       nextDue = due.toLocaleDateString('pt-BR');
       const diffDays = Math.ceil((due - today) / 86400000);
       if(!info.active) statusTag = '<span class="status-tag danger">Inativo</span>';
+      else if(diffDays < 0) statusTag = '<span class="status-tag danger">Atrasada</span>';
       else if(diffDays <= 1) statusTag = '<span class="status-tag warn">Vence em breve</span>';
       else statusTag = '<span class="status-tag ok">Em dia</span>';
     }
@@ -302,12 +332,6 @@ async function loadStudents(){
   updateStats(students);
 }
 
-function nextDueDate(dueDay, today){
-  let due = new Date(today.getFullYear(), today.getMonth(), dueDay);
-  if(due < today) due = new Date(today.getFullYear(), today.getMonth()+1, dueDay);
-  return due;
-}
-
 function updateStats(students){
   const total = students.length;
   let emDia = 0, pendentes = 0;
@@ -315,7 +339,7 @@ function updateStats(students){
   students.forEach(s => {
     const info = s.payment_info;
     if(!info || !info.active) return;
-    const due = nextDueDate(info.due_day, today);
+    const due = getNextDueDate(info, today);
     const diffDays = Math.ceil((due - today) / 86400000);
     if(diffDays <= 1) pendentes++; else emDia++;
   });
@@ -325,17 +349,14 @@ function updateStats(students){
 }
 
 // ---------- notificações de cobrança ----------
-// Usa o dia de vencimento do MÊS ATUAL (sem rolar pro próximo mês) pra
-// conseguir detectar mensalidade atrasada, diferente da tabela acima
-// (que sempre mostra a próxima data futura).
 function computeNotifications(students){
   const today = new Date();
   const list = [];
   students.forEach(s => {
     const info = s.payment_info;
     if(!info || !info.due_day || !info.active) return;
-    const thisMonthDue = new Date(today.getFullYear(), today.getMonth(), info.due_day);
-    const diffDays = Math.ceil((thisMonthDue - today) / 86400000);
+    const due = getNextDueDate(info, today);
+    const diffDays = Math.ceil((due - today) / 86400000);
     if(diffDays < 0){
       list.push({ student: s, late: true, diffDays });
     } else if(diffDays <= 3){
@@ -364,12 +385,15 @@ function renderNotifications(list){
     const s = item.student;
     const label = item.late ? 'Atrasada' : 'Vence em breve';
     const tagClass = item.late ? 'danger' : 'warn';
-    return `<div class="flex-between" style="padding:10px 0;border-bottom:1px dashed var(--line);gap:10px;">
+    return `<div class="flex-between" style="padding:10px 0;border-bottom:1px dashed var(--line);gap:8px;">
       <div>
         <div style="font-weight:600;font-size:13px;">${s.full_name || s.email}</div>
         <span class="status-tag ${tagClass}">${label}</span>
       </div>
-      <button class="btn-outline" style="padding:6px 12px;font-size:11px;flex-shrink:0;" onclick="openBilling('${s.id}', ${item.late})">Cobrar</button>
+      <div style="display:flex; gap:6px; flex-shrink:0;">
+        <button class="btn-outline" style="padding:6px 10px;font-size:11px;" onclick="markAsPaid('${s.id}')">Pago</button>
+        <button class="btn-outline" style="padding:6px 10px;font-size:11px;" onclick="openBilling('${s.id}', ${item.late})">Cobrar</button>
+      </div>
     </div>`;
   }).join('');
 }
@@ -417,6 +441,52 @@ async function sendBillingWhatsapp(){
   window.open(`https://wa.me/${phone}?text=${text}`, '_blank');
 }
 
+// Marca a mensalidade como paga: desloca a data de vencimento pra o mesmo
+// dia do MÊS SEGUINTE ao vencimento atual (não do mês seguinte a hoje —
+// assim, se estava atrasada, ela é corrigida em exatamente 1 mês).
+async function markAsPaid(studentId){
+  const payRef = db.collection('payment_info').doc(studentId);
+  const paySnap = await payRef.get();
+  const info = paySnap.exists ? paySnap.data() : null;
+  if(!info || !info.due_day){
+    window.alert('Configure a mensalidade desse aluno (na ficha) antes de marcar como pago.');
+    return;
+  }
+  const today = new Date();
+  const base = getNextDueDate(info, today);
+  const newDue = new Date(base.getFullYear(), base.getMonth() + 1, base.getDate());
+
+  await payRef.set({
+    next_due_date: firebase.firestore.Timestamp.fromDate(newDue),
+    last_paid_at: firebase.firestore.FieldValue.serverTimestamp()
+  }, { merge: true });
+
+  await loadStudents();
+
+  if(CURRENT_STUDENT_ID === studentId && !document.getElementById('modal').classList.contains('hidden')){
+    const freshSnap = await payRef.get();
+    updateFichaDueUI(freshSnap.exists ? freshSnap.data() : null);
+  }
+}
+
+function updateFichaDueUI(info){
+  const today = new Date();
+  const dueEl = document.getElementById('f-next-due');
+  const btn = document.getElementById('f-mark-paid');
+  if(!info || !info.due_day){
+    dueEl.textContent = '–';
+    btn.disabled = true;
+    return;
+  }
+  const due = getNextDueDate(info, today);
+  const diffDays = Math.ceil((due - today) / 86400000);
+  let suffix = '';
+  if(diffDays < 0) suffix = ' (atrasada)';
+  else if(diffDays <= 3) suffix = ' (vence em breve)';
+  dueEl.textContent = due.toLocaleDateString('pt-BR') + suffix;
+  btn.disabled = !(diffDays <= 3);
+}
+
 async function openManage(studentId){
   CURRENT_STUDENT_ID = studentId;
   const [studentSnap, paySnap, logsSnap] = await Promise.all([
@@ -441,6 +511,7 @@ async function openManage(studentId){
   document.getElementById('f-due-day').value = payInfo ? payInfo.due_day : '';
   document.getElementById('f-active').value = payInfo ? String(payInfo.active) : 'true';
   document.getElementById('f-phone').value = student.phone || '';
+  updateFichaDueUI(payInfo);
 
   document.getElementById('skills-form').innerHTML = SKILLS.map(sk => {
     const level = latestBySkill[sk.id] ?? 0;
@@ -480,12 +551,22 @@ document.getElementById('modal-save').onclick = async () => {
 
   await db.collection('students').doc(CURRENT_STUDENT_ID).set({ belt, stripes, phone: phone || null }, { merge: true });
 
-  await db.collection('payment_info').doc(CURRENT_STUDENT_ID).set({
+  const payRef = db.collection('payment_info').doc(CURRENT_STUDENT_ID);
+  const paySnap = await payRef.get();
+  const existing = paySnap.exists ? paySnap.data() : null;
+
+  const patch = {
     monthly_fee: fee,
     due_day: dueDay,
     active,
     updated_at: firebase.firestore.FieldValue.serverTimestamp()
-  }, { merge: true });
+  };
+  // Só recalcula a data de vencimento se for a primeira vez ou se o dia mudou —
+  // assim não perde o progresso de "marcar como pago" só por salvar de novo.
+  if(!existing || !existing.next_due_date || existing.due_day !== dueDay){
+    patch.next_due_date = firebase.firestore.Timestamp.fromDate(nextDueDate(dueDay, new Date()));
+  }
+  await payRef.set(patch, { merge: true });
 
   const writes = [];
   document.querySelectorAll('#skills-form .stripe-tab').forEach(bar => {
