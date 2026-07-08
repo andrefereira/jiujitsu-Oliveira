@@ -31,7 +31,7 @@
       <h1>Painel do Professor</h1>
       <div class="subtitle">Gerencie faixas, habilidades e mensalidades de cada aluno.</div>
     </div>
-    <div style="position:relative;">
+    <div>
       <button id="notif-bell" class="btn-outline">
         Cobranças <span id="notif-badge" class="status-tag danger hidden" style="margin-left:6px;"></span>
       </button>
@@ -187,7 +187,10 @@ async function guardAndInit(user){
   document.getElementById('register-student-btn').onclick = registerStudent;
 
   document.getElementById('notif-bell').onclick = () => {
-    document.getElementById('notif-panel').classList.toggle('hidden');
+    const panel = document.getElementById('notif-panel');
+    const willShow = panel.classList.contains('hidden');
+    panel.classList.toggle('hidden');
+    if(willShow) positionNotifPanel();
   };
   document.addEventListener('click', (ev) => {
     const panel = document.getElementById('notif-panel');
@@ -195,6 +198,10 @@ async function guardAndInit(user){
     if(!panel.contains(ev.target) && !bell.contains(ev.target)){
       panel.classList.add('hidden');
     }
+  });
+  window.addEventListener('resize', () => {
+    const panel = document.getElementById('notif-panel');
+    if(!panel.classList.contains('hidden')) positionNotifPanel();
   });
 
   document.getElementById('billing-cancel').onclick = () => document.getElementById('billing-modal').classList.add('hidden');
@@ -396,6 +403,28 @@ function computeNotifications(students){
   });
   list.sort((a, b) => (a.late === b.late) ? (a.diffDays - b.diffDays) : (a.late ? -1 : 1));
   return list;
+}
+
+// Posiciona o painel de notificações via JS (não CSS) porque, no celular, o
+// header-row quebra linha (flex-wrap) e o botão "Cobranças" pode acabar
+// alinhado à esquerda em vez da direita — o que fazia o painel (posicionado
+// com "right:0" relativo a esse botão) estourar pra fora da tela à esquerda.
+// Calculando a posição a partir da posição real do botão na tela, o painel
+// sempre fica dentro dos limites da janela, não importa onde o botão esteja.
+function positionNotifPanel(){
+  const btn = document.getElementById('notif-bell');
+  const panel = document.getElementById('notif-panel');
+  const margin = 14;
+  const rect = btn.getBoundingClientRect();
+  const width = Math.min(340, window.innerWidth - margin * 2);
+  let left = rect.right - width;
+  left = Math.max(margin, Math.min(left, window.innerWidth - width - margin));
+  let top = rect.bottom + 8;
+  const maxTop = window.innerHeight - 100;
+  if(top > maxTop) top = maxTop;
+  panel.style.left = left + 'px';
+  panel.style.top = top + 'px';
+  panel.style.width = width + 'px';
 }
 
 function renderNotifications(list){
