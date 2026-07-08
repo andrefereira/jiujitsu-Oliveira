@@ -216,8 +216,12 @@ tr:hover td{ background:rgba(28,25,19,0.025); }
 .modal h3{ font-size:17px; margin-bottom:16px; padding-bottom:8px; border-bottom:1px dashed var(--line); }
 .modal-actions{ display:flex; gap:10px; justify-content:flex-end; margin-top:18px; }
 
-/* dropdown de notificações de cobrança (professor.html) */
-#notif-panel{ position:absolute; right:0; top:44px; width:340px; z-index:40; max-height:360px; overflow:auto; }
+/* dropdown de notificações de cobrança (professor.html)
+   position:fixed porque a posição (left/top/width) é calculada e definida
+   via JS a partir da posição real do botão na tela — veja positionNotifPanel()
+   em professor.html. Evita o painel estourar a tela quando o cabeçalho
+   quebra linha no celular. */
+#notif-panel{ position:fixed; z-index:40; max-height:min(360px, 60vh); overflow:auto; }
 
 .hidden{ display:none !important; }
 .flex-between{ display:flex; align-items:center; justify-content:space-between; }
@@ -256,10 +260,6 @@ tr:hover td{ background:rgba(28,25,19,0.025); }
   .modal{ padding:18px; max-height:none; margin-top:6px; }
   .modal-actions{ flex-wrap:wrap; }
   .modal-actions .btn, .modal-actions .btn-outline{ flex:1; }
-
-  /* dropdown de notificações: largura fixa de 340px não cabe em telas
-     pequenas — trava na largura disponível da tela. */
-  #notif-panel{ width:calc(100vw - 28px); max-width:340px; }
 
   /* tabela de alunos: em vez de espremer colunas ate ficar ilegivel, deixa rolar de lado */
   #students-table-box{ overflow-x:auto; -webkit-overflow-scrolling:touch; }
