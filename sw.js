@@ -1,7 +1,7 @@
 // Service worker do app shell. Só cuida de arquivos estáticos (HTML/CSS/JS/
 // ícones) para permitir instalar como PWA e abrir offline; dados do Firestore
 // continuam sempre buscados direto da rede (nunca são cacheados aqui).
-const CACHE_VERSION = 'v1';
+const CACHE_VERSION = 'v2';
 const CACHE_NAME = `academia-shell-${CACHE_VERSION}`;
 
 const APP_SHELL = [
@@ -12,7 +12,7 @@ const APP_SHELL = [
   'seed-skills.html',
   'assets/style.css',
   'assets/config.js',
-  'assets/manifest.webmanifest',
+  'manifest.webmanifest',
   'assets/icons/icon-192.png',
   'assets/icons/icon-512.png',
   'assets/icons/icon-512-maskable.png',
