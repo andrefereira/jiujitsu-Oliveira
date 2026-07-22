@@ -5,6 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Minha Progressão</title>
 <link rel="stylesheet" href="assets/style.css">
+<link rel="manifest" href="assets/manifest.webmanifest">
+<meta name="theme-color" content="#1C1913">
+<link rel="icon" href="favicon.ico" sizes="any">
+<link rel="icon" href="assets/icons/icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="assets/icons/icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Academia">
 <script src="https://www.gstatic.com/firebasejs/12.15.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/12.15.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/12.15.0/firebase-firestore-compat.js"></script>
@@ -215,6 +223,11 @@ auth.onAuthStateChanged((user) => {
   if(!user){ window.location.href = 'index.html'; return; }
   guardAndInit(user);
 });
+</script>
+<script>
+if('serviceWorker' in navigator){
+  window.addEventListener('load', () => { navigator.serviceWorker.register('sw.js').catch(() => {}); });
+}
 </script>
 </body>
 </html>
